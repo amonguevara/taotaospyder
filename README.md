@@ -1,4 +1,4 @@
-##🐍 Taotaospyder
+# 🐍 Taotaospyder
 
 Taotaospyder 是一个基于 Selenium 的淘宝商品评论爬虫，用于抓取商品评论数据并保存为 Excel 文件，适合数据挖掘、文本分析、情感分析等任务。
 
