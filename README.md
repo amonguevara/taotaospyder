@@ -23,7 +23,7 @@ Taotaospyder 是一个基于 Selenium 的淘宝商品评论爬虫，用于抓取
 git clone https://github.com/amonguevara/taotaospyder.git
 cd taotaospyder
 
-💼 输出数据示例
+## 💼 输出数据示例
 
 用户昵称	评论时间与型号	评论内容
 g**7	2025年4月19日 原色钛金属/256GB	第一次在淘宝买手机…
