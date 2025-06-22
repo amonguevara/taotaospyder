@@ -17,25 +17,11 @@ Taotaospyder 是一个基于 Selenium 的淘宝商品评论爬虫，用于抓取
 
 
 ## 🚀 使用方式
-
-1. 克隆仓库
+克隆仓库
 
 ```bash
 git clone https://github.com/amonguevara/taotaospyder.git
 cd taotaospyder
-
-	2.	安装依赖
-
-建议使用虚拟环境：
-
-pip install -r requirements.txt
-
-	3.	运行程序
-
-python taotaospyder.py
-
-浏览器将自动打开淘宝登录页，使用淘宝 App 扫码登录，程序随后自动抓取并保存评论。
-
 
 💼 输出数据示例
 
