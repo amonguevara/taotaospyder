@@ -1,0 +1,180 @@
+from selenium import webdriver
+from selenium.webdriver.edge.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.microsoft import EdgeChromiumDriverManager
+
+import pickle
+import os
+import time
+import pandas as pd
+import re
+
+class TaobaoScraper:
+    def __init__(self,
+                 user_data_dir: str = "taobao_profile",
+                 cookie_file: str = "taobao_cookies.pkl"):
+        self.driver = None
+        self.user_data_dir = user_data_dir
+        self.cookie_file = cookie_file
+
+    def __enter__(self):
+        self.initialize_driver()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def initialize_driver(self):
+        options = webdriver.EdgeOptions()
+        options.use_chromium = True
+        options.add_argument(f"user-data-dir={self.user_data_dir}")
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option("useAutomationExtension", False)
+
+        self.driver = webdriver.Edge(
+            service=Service(EdgeChromiumDriverManager().install()),
+            options=options
+        )
+
+    def check_login_status(self) -> bool:
+        try:
+            self.driver.get("https://www.taobao.com")
+            WebDriverWait(self.driver, 15).until(
+                EC.presence_of_element_located((By.LINK_TEXT, "我的淘宝"))
+            )
+            return True
+        except:
+            return False
+
+    def manual_login(self):
+        print("在打开的浏览器中扫码登录淘宝账户...")
+        self.driver.get("https://login.taobao.com")
+        input("登录成功后，按回车继续")
+
+        if not self.check_login_status():
+            raise RuntimeError("登录失败，请重试")
+
+        with open(self.cookie_file, 'wb') as f:
+            pickle.dump(self.driver.get_cookies(), f)
+        print("登录Cookie已保存")
+
+    def load_cookies(self) -> bool:
+        if os.path.exists(self.cookie_file):
+            try:
+                with open(self.cookie_file, 'rb') as f:
+                    cookies = pickle.load(f)
+                    self.driver.delete_all_cookies()
+                    for cookie in cookies:
+                        if 'expiry' in cookie:
+                            del cookie['expiry']
+                        self.driver.add_cookie(cookie)
+                self.driver.refresh()
+                return True
+            except:
+                return False
+        return False
+
+    def ensure_login(self):
+        if os.path.exists(self.cookie_file):
+            os.remove(self.cookie_file)
+
+        self.manual_login()
+
+    def clean_text(self, text):
+        text = re.sub(r"[\U00010000-\U0010FFFF\uD800-\uDBFF][\uDC00-\uDFFF]?", "", text)
+        text = re.sub(r"\s+", " ", text)
+        return text.strip()
+
+    def scrape_reviews(self, product_url: str, output_file: str, max_comments: int = 1000):
+        self.driver.get(product_url)
+        time.sleep(3)
+
+        try:
+            show_all_btn = WebDriverWait(self.driver, 15).until(
+                EC.element_to_be_clickable((By.CLASS_NAME, '_4nNipe17pV--ShowButton--_15e2446'))
+            )
+            self.driver.execute_script("arguments[0].click();", show_all_btn)
+            time.sleep(2)
+        except Exception as e:
+            raise RuntimeError(f"无法点击“全部评价”按钮: {str(e)}")
+
+        try:
+            comment_container = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.CLASS_NAME, '_4nNipe17pV--comments--_00182ac'))
+            )
+        except Exception as e:
+            raise RuntimeError(f"无法定位评论容器: {str(e)}")
+
+        comments_data = []
+        seen_ids = set()
+        retry_count = 0
+        max_retries = 3
+
+        while len(comments_data) < max_comments and retry_count < max_retries:
+            for _ in range(10):
+                self.driver.execute_script("arguments[0].scrollTop += arguments[0].clientHeight;", comment_container)
+                time.sleep(0.5)
+
+            comment_blocks = self.driver.find_elements(By.CLASS_NAME, '_4nNipe17pV--Comment--_0b4e753')
+            print(f"当前共检测到评论块：{len(comment_blocks)}")
+
+            new_items = 0
+
+            for block in comment_blocks:
+                comment_id = block.get_attribute('data-before-current-y')
+                if comment_id in seen_ids:
+                    continue
+
+                try:
+                    content = block.find_element(By.CLASS_NAME, '_4nNipe17pV--content--_8e6708c').text.strip()
+                    meta = block.find_element(By.CLASS_NAME, '_4nNipe17pV--meta--_8725fde').text.strip()
+                    username = block.find_element(By.CLASS_NAME, '_4nNipe17pV--userName--f0a85ded').text.strip()
+
+                    clean_content = self.clean_text(content)
+                    clean_meta = self.clean_text(meta)
+                    clean_username = self.clean_text(username)
+
+                    comments_data.append({
+                        "用户昵称": clean_username,
+                        "评论时间与型号": clean_meta,
+                        "评论内容": clean_content
+                    })
+                    seen_ids.add(comment_id)
+                    new_items += 1
+
+                    if len(comments_data) >= max_comments:
+                        break
+                except:
+                    continue
+
+            if new_items == 0:
+                retry_count += 1
+                print(f"无新增，重试次数：{retry_count}/{max_retries}")
+            else:
+                print(f"本轮新增：{new_items} 条，累计：{len(comments_data)} 条")
+                retry_count = 0
+
+        df = pd.DataFrame(comments_data)
+        df.to_excel(output_file, index=False, engine='openpyxl')
+        print(f"共抓取 {len(df)} 条评论，已保存到：{output_file}")
+
+    def close(self):
+        if self.driver:
+            self.driver.quit()
+            print("浏览器关闭")
+            if os.path.exists(self.cookie_file):
+                os.remove(self.cookie_file)
+
+if __name__ == "__main__":
+    with TaobaoScraper() as scraper:
+        scraper.ensure_login()
+        scraper.scrape_reviews(
+            # 替换成需要的淘宝url
+            product_url="https://item.taobao.com/item.htm?id=780494783328",
+            # 替换成保存文件路径
+            output_file="...",
+            max_comments=1000
+        )
